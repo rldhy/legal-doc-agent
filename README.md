@@ -1,3 +1,5 @@
+![Project Banner](/images/legal-doc-agent-banner.png)
+
 # Legal Document Agent
 
 A local AI-powered RAG application for querying legal documents using natural language.
