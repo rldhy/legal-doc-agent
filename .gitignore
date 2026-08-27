@@ -41,7 +41,7 @@ dist/
 data/documents/*
 
 # Keep the directory in Git
-!data/documents
+!data/documents/README.md
 
 
 # =============================================================================
