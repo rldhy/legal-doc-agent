@@ -1,0 +1,19 @@
+[project]
+name = "legal-doc-agent"
+version = "0.1.0"
+description = "Simple RAG agent for querying legal documents"
+requires-python = ">=3.12"
+
+dependencies = [
+    "langchain",
+    "langchain-chroma",
+    "langchain-ollama",
+    "langchain-text-splitters",
+    "pydantic",
+    "pydantic-settings",
+    "pypdf"
+]
+
+[tool.setuptools]
+packages = ["agent"]
+py-modules = ["__init__"]
