@@ -1,7 +1,7 @@
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
-from agent.config import settings
+from agent.settings import settings
 
 
 def deduplicate_documents(documents: list[Document]) -> list[Document]:

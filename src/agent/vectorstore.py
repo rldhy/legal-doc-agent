@@ -1,7 +1,7 @@
 from langchain_chroma import Chroma
 
 from agent.embeddings import get_embeddings
-from agent.config import settings
+from agent.settings import settings
 
 
 def load_vector_store() -> Chroma:

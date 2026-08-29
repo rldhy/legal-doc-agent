@@ -6,7 +6,7 @@ from langchain_core.documents import Document
 from agent.chunking import chunk_documents
 from agent.ingest import load_pdf, get_file_hash
 from agent.vectorstore import get_chunks_by_document_hash, get_chunks_by_filename, load_vector_store
-from agent.config import settings
+from agent.settings import settings
 
 
 def document_is_indexed(
@@ -107,3 +107,11 @@ def index_documents(
         f"\nIndexed {len(all_chunks)} chunks "
         f"from {len(paths)} documents."
     )
+
+
+def main():
+    index_documents()
+
+
+if __name__ == "__main__":
+    main()

@@ -14,6 +14,18 @@ dependencies = [
     "pypdf"
 ]
 
-[tool.setuptools]
-packages = ["agent"]
-py-modules = ["__init__"]
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "agent"
+
+[project.scripts]
+query-agent = "agent.main:start"
+index-agent = "agent.index:main"

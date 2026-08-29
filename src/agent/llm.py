@@ -1,5 +1,5 @@
 from langchain_ollama import ChatOllama
-from agent.config import settings
+from agent.settings import settings
 
 
 def get_llm() -> ChatOllama:

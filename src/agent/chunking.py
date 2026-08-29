@@ -3,7 +3,7 @@ import hashlib
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from agent.config import settings
+from agent.settings import settings
 
 
 def chunk_documents(
