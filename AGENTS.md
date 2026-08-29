@@ -1,10 +1,12 @@
 # AI Agent Development Guide
 
-This file provides context and development guidance for AI coding agents working on this repository.
+This file provides context, architectural constraints, and development guidance for AI coding agents working on this repository.
+
+Read this file before making changes. Inspect the existing implementation before proposing or modifying architecture.
 
 ## Project Overview
 
-This project is a local-first RAG application for querying legal documents using natural language.
+Legal Document Agent is a local-first RAG application for querying legal documents using natural language.
 
 The application:
 
@@ -14,10 +16,13 @@ The application:
 4. Generates embeddings locally using Ollama.
 5. Stores embeddings and metadata in Chroma.
 6. Retrieves relevant chunks for a user's question.
-7. Uses a locally hosted LLM to generate a grounded answer.
-8. Validates and renders citations back to the original documents.
+7. Uses a locally hosted LLM to generate a grounded structured answer.
+8. Validates citations against retrieved evidence.
+9. Renders citations back to the original documents and PDF pages.
 
-The system is designed to keep document contents, embeddings, retrieval, and inference local.
+The system is intentionally designed so that document contents, embeddings, vector storage, retrieval, and LLM inference can remain local.
+
+The goal is not merely to create a chatbot over PDFs. The long-term goal is to build a reliable local research system for identifying relationships, obligations, events, dates, and other facts across collections of legal documents while preserving traceability to the underlying evidence.
 
 ## Current Milestone
 
@@ -27,20 +32,23 @@ V1 supports:
 
 * PDF ingestion
 * Page-level provenance metadata
+* Content-based document fingerprints
 * Recursive text chunking
+* Deterministic chunk/vector IDs
 * Local Ollama embeddings
 * Persistent Chroma storage
 * Idempotent document indexing
-* Semantic retrieval
+* Semantic vector retrieval
 * Duplicate retrieval filtering
 * Local LLM inference
-* Structured answers
+* Structured Pydantic responses
 * Citation validation
 * PDF page-level source citations
 * Interactive CLI querying
 * Single-query CLI execution
+* Environment-based configuration
 
-Future changes should preserve this functionality unless explicitly replacing it.
+Future changes should preserve this functionality unless a change explicitly replaces or improves it.
 
 ## Technology Stack
 
@@ -55,213 +63,307 @@ Primary technologies:
 * pypdf
 * Pydantic
 * pydantic-settings
+* uv
+* uv_build
 * Docker
 
-Do not introduce `langchain-community`. Prefer standalone LangChain integration packages or direct library usage.
+Do not introduce `langchain-community`.
 
-## Project Structure
+Prefer standalone LangChain integration packages or direct library usage.
 
-The application code lives under:
+Examples of existing standalone integrations include:
 
-```text
-src/agent/
-```
+* `langchain-ollama`
+* `langchain-chroma`
+* `langchain-text-splitters`
 
-Major modules:
+## Package and Project Structure
 
-```text
-main.py
-    CLI entry point and application orchestration.
-
-index.py
-    Discovers and indexes documents.
-
-ingest.py
-    Reads PDFs and creates page-level LangChain Documents.
-    Responsible for source metadata and document fingerprints.
-
-chunking.py
-    Splits page Documents into retrieval chunks while preserving metadata.
-
-embeddings.py
-    Configures the local Ollama embedding model.
-
-vectorstore.py
-    Creates or loads the persistent Chroma collection and provides
-    vector-store-related helpers.
-
-retrieval.py
-    Retrieves candidate chunks and performs retrieval-level processing
-    such as deduplication.
-
-llm.py
-    Configures the local Ollama generation model.
-
-models.py
-    Contains Pydantic models used for structured LLM responses.
-
-rag.py
-    Builds grounded context, invokes the LLM, validates citations,
-    and renders answers.
-
-config.py
-    Contains typed application configuration backed by environment variables.
-```
-
-Documents for local development are stored under:
+The repository uses a `src/` Python package layout.
 
 ```text
-data/documents/
+legal-doc-agent/
+├── data/
+│   └── documents/
+├── docs/
+├── images/
+├── src/
+│   └── agent/
+│       ├── __init__.py
+│       ├── main.py
+│       ├── index.py
+│       ├── ingest.py
+│       ├── chunking.py
+│       ├── embeddings.py
+│       ├── vectorstore.py
+│       ├── retrieval.py
+│       ├── llm.py
+│       ├── models.py
+│       ├── rag.py
+│       └── settings.py
+├── .env.example
+├── AGENTS.md
+├── pyproject.toml
+├── uv.lock
+└── README.md
 ```
 
-Actual legal documents should not be committed to Git.
+`src/` is the source root. It is not part of the Python package name.
+
+Use imports such as:
+
+```python
+from agent.settings import settings
+```
+
+### Module Responsibilities
+
+`main.py`
+: CLI entry point and query application orchestration.
+
+`index.py`
+: Discovers documents and coordinates indexing.
+
+`ingest.py`
+: Reads PDFs, extracts page text, calculates document fingerprints, and creates page-level LangChain `Document` objects with provenance metadata.
+
+`chunking.py`
+: Splits page documents into retrieval chunks while preserving metadata and assigning deterministic chunk IDs.
+
+`embeddings.py`
+: Configures the local Ollama embedding model.
+
+`vectorstore.py`
+: Creates or loads the persistent Chroma collection and contains vector-store-related helpers.
+
+`retrieval.py`
+: Performs semantic retrieval and retrieval-level processing such as deduplication.
+
+`llm.py`
+: Configures the local Ollama generation model.
+
+`models.py`
+: Contains Pydantic models used for structured responses.
+
+`rag.py`
+: Builds grounded context, invokes the LLM, validates citations, maps citations to retrieved evidence, and renders answers.
+
+`settings.py`
+: Contains typed application configuration backed by environment variables.
+
+Keep these responsibilities separated. Do not move the entire pipeline into `main.py` or `index.py`.
 
 ## Architecture
+
+Indexing and querying are intentionally separate workflows.
 
 ### Indexing
 
 ```text
-PDF
- │
- ▼
-pypdf
- │
- ▼
-Page Documents + metadata
- │
- ▼
-Chunking
- │
- ▼
-Ollama embeddings
- │
- ▼
-Chroma
+PDF Documents
+     │
+     ▼
+   pypdf
+     │
+     ▼
+Page Documents + Metadata
+     │
+     ▼
+Text Chunking
+     │
+     ▼
+Ollama Embeddings
+     │
+     ▼
+   Chroma
 ```
 
-Indexing is separate from querying.
+Documents should be indexed when the underlying document corpus changes.
 
 Do not re-index documents during normal query execution.
 
 ### Querying
 
 ```text
-User question
+User Question
      │
      ▼
-Query embedding
+Query Embedding
      │
      ▼
-Chroma similarity search
+Chroma Vector Search
      │
      ▼
-Candidate chunks
+Candidate Chunks
      │
      ▼
 Deduplication
      │
      ▼
-Grounded prompt
+Grounded Context
      │
      ▼
 Local LLM
      │
      ▼
-Structured response
+Structured Response
      │
      ▼
-Citation validation
+Citation Validation
      │
      ▼
-Answer + source references
+Answer + Source References
 ```
 
-## Important Design Principles
+## Architectural Invariants
 
-### Keep inference local
+The following behaviors are intentional. Treat them as invariants unless a task explicitly requires changing them.
 
-The project is intentionally local-first.
+### Keep Processing Local by Default
 
-Do not introduce external hosted LLM or embedding APIs unless explicitly requested.
+The project is local-first.
 
-Legal document text should not be transmitted to external services by default.
+Do not introduce external hosted LLM, embedding, vector database, document-processing, or reranking APIs unless explicitly requested.
 
-### Preserve provenance
+Legal document contents should not be transmitted to external services by default.
 
-Every document chunk must retain enough metadata to trace it back to the original source.
+If a proposed feature requires sending document contents outside the local environment, call this out explicitly before implementing it.
+
+### Preserve Provenance
+
+Every retrieval chunk must retain enough metadata to trace it back to the original source.
 
 At minimum, preserve:
 
 * source
 * filename
 * document hash
-* PDF page number
+* physical PDF page number
 * chunk ID
 
-Never discard provenance during transformations.
+Do not discard provenance during ingestion, chunking, indexing, retrieval, or generation.
 
-Future section-aware parsing should add metadata rather than replacing existing provenance.
+Future section-aware parsing should add metadata such as article, section, subsection, or printed page label without replacing the existing provenance fields.
 
-### Do not let the LLM invent citations
+### Physical PDF Pages Are the V1 Citation Unit
 
-The LLM may identify which retrieved sources support an answer, but the application owns citation validation and rendering.
+V1 citations refer to physical PDF page numbers.
 
-Never trust model-generated filenames, page numbers, section numbers, URLs, or source identifiers without validating them against application-controlled metadata.
+Do not silently replace these with printed page labels, section numbers, or model-generated page references.
 
-Citation IDs returned by the model must correspond to sources actually supplied to that model invocation.
+If richer citation types are added later, retain a reliable mapping back to the physical PDF source.
 
-### Ground answers in retrieved evidence
+### Retrieved Evidence Defines the Citation Namespace
 
-The generation model must answer using the supplied source material.
+Source IDs supplied to the LLM correspond to the documents in the retrieved evidence list for that invocation.
 
-When evidence is insufficient, the application should prefer an explicit insufficient-evidence response over an unsupported answer.
+For example:
 
-Do not weaken grounding prompts merely to make the model answer more questions.
+```text
+[SOURCE 1] -> retrieved[0]
+[SOURCE 2] -> retrieved[1]
+[SOURCE 3] -> retrieved[2]
+```
 
-### Retrieval and generation are separate concerns
+Citation IDs must be validated against that exact retrieved list.
 
-Do not assume that improving the prompt fixes poor retrieval.
+Never map model-generated source IDs against:
 
-When investigating incorrect answers, inspect:
+* every indexed chunk
+* every document in Chroma
+* the original unfiltered candidate set when a different list was supplied to the model
+
+This invariant is essential for citation correctness.
+
+### Do Not Let the LLM Invent Citations
+
+The LLM may identify which supplied sources support its answer.
+
+The application owns citation validation, source mapping, and rendering.
+
+Do not trust model-generated:
+
+* filenames
+* page numbers
+* section numbers
+* URLs
+* document identifiers
+* source identifiers
+
+unless they are validated against application-controlled metadata.
+
+Prefer deterministic application logic for provenance whenever possible.
+
+### Ground Answers in Retrieved Evidence
+
+The generation model must answer using only the evidence supplied for the current question.
+
+When the evidence is insufficient, prefer an explicit insufficient-evidence response over a plausible but unsupported answer.
+
+Do not weaken grounding behavior merely to increase answer coverage.
+
+### Retrieval and Generation Are Separate Concerns
+
+Do not assume prompt changes can compensate for poor retrieval.
+
+When investigating an incorrect or incomplete answer, inspect the pipeline in this order:
 
 1. What chunks were retrieved?
-2. Did they contain the necessary evidence?
-3. Were the correct chunks ranked highly enough?
-4. Only then inspect generation behavior.
+2. Do the retrieved chunks contain the necessary evidence?
+3. Was the correct evidence ranked highly enough?
+4. Was useful evidence removed during deduplication or filtering?
+5. Only then inspect generation behavior.
 
-Retrieval quality should be testable independently of the LLM.
+Retrieval quality should remain testable independently of the LLM.
 
-### Keep indexing idempotent
+### Keep Indexing Idempotent
 
 Re-running the indexer against unchanged documents must not create duplicate vectors.
 
-Current indexing behavior should distinguish:
+Current behavior is:
 
 ```text
-new document       → index
-unchanged document → skip
-modified document  → replace previous chunks
+new document       -> index
+unchanged document -> skip
+modified document  -> remove old chunks and re-index
 ```
 
 Document fingerprints are based on file contents.
 
-Chunk/vector IDs should be deterministic.
+Chunk/vector IDs should remain deterministic.
 
-### Keep modules focused
+Changes to indexing logic must preserve the ability to safely run the indexer multiple times.
 
-Avoid putting the entire pipeline into `main.py`.
+### Prefer Deterministic Application Logic
 
-`main.py` should primarily orchestrate existing components.
+Use the LLM where semantic reasoning is useful.
 
-Prefer small functions with clear responsibilities over large framework-driven abstractions.
+Prefer normal Python code for:
+
+* validation
+* hashing
+* source mapping
+* citation rendering
+* deduplication
+* configuration
+* filesystem operations
+* deterministic indexing decisions
+
+Do not move deterministic behavior into prompts without a clear reason.
 
 ## Configuration
 
-Runtime configuration is defined through environment variables and loaded by `config.py`.
+Runtime configuration lives in:
 
-Use `.env.example` as the canonical list of configurable values.
+```text
+src/agent/settings.py
+```
 
-Typical settings include:
+Configuration is loaded from environment variables using `pydantic-settings`.
+
+`.env.example` is the canonical documentation for configurable values.
+
+Current settings include:
 
 ```text
 OLLAMA_BASE_URL
@@ -280,41 +382,86 @@ RETRIEVAL_CANDIDATE_COUNT
 RETRIEVAL_RESULT_COUNT
 ```
 
-Do not hard-code these values elsewhere if a configuration setting already exists.
+Do not hard-code configurable values elsewhere when a corresponding setting exists.
+
+When adding configuration:
+
+1. Add the typed setting to `settings.py`.
+2. Add the example/default to `.env.example` when appropriate.
+3. Update documentation if users need to know about it.
 
 Never commit `.env`.
 
+## Python and Dependency Management
+
+This project uses `uv` for Python environments, dependency management, locking, and command execution.
+
+Do not use `pip`, `pipx`, Poetry, Conda, or `requirements.txt` for project dependency management.
+
+Install and synchronize the project environment with:
+
+```bash
+uv sync
+```
+
+Add a runtime dependency with:
+
+```bash
+uv add <package>
+```
+
+Add a development dependency with:
+
+```bash
+uv add --dev <package>
+```
+
+Run Python commands through the project environment using `uv run`.
+
+When dependencies change, update and commit both:
+
+```text
+pyproject.toml
+uv.lock
+```
+
+The project uses `uv_build` as its Python build backend.
+
+Do not introduce another build backend unless there is a concrete requirement that `uv_build` cannot satisfy.
+
 ## Development Commands
 
-Create a local environment file:
+Create a local environment file if one does not already exist:
 
 ```bash
 cp .env.example .env
 ```
 
+Install/synchronize dependencies:
+
+```bash
+uv sync
+```
+
 Index documents:
 
 ```bash
-python -m agent.index
+uv run index-agent
 ```
 
 Start interactive query mode:
 
 ```bash
-python -m agent.main
+uv run query-agent
 ```
 
-Ask a single question:
-
-```bash
-python -m agent.main "What records must the partnership maintain?"
-```
+Prefer the configured project entry points over `python -m` commands in documentation and examples.
 
 ## Ollama
 
 Ollama is expected to expose its API at the configured `OLLAMA_BASE_URL`.
 
-The development environment currently uses:
+The default development configuration uses:
 
 ```text
 Generation model:
@@ -324,26 +471,32 @@ Embedding model:
 nomic-embed-text
 ```
 
-Do not assume these names are hard-coded. Read them from configuration.
+Do not assume these model names are hard-coded. Read them from application configuration.
 
-Detailed Docker/NVIDIA setup instructions are available under `docs/`.
+All LLM and embedding integrations should use the configured Ollama base URL.
 
-## Dependencies
+Detailed Docker and NVIDIA setup instructions are available under `docs/`.
 
-Prefer minimal dependencies.
+## Dependency Guidelines
+
+Prefer a small dependency surface.
 
 Before adding a package:
 
 1. Check whether Python's standard library already provides the functionality.
 2. Check whether an existing project dependency already provides it.
-3. Prefer focused standalone integrations over large umbrella packages.
-4. Explain why a new dependency is necessary.
+3. Prefer focused standalone packages over large umbrella dependencies.
+4. Confirm that the dependency supports the project's Python version.
+5. Explain why the new dependency is useful.
+6. Add it using `uv add` or `uv add --dev`.
 
-In particular, avoid adding dependencies solely to replace simple application code.
+Avoid dependencies whose only purpose is replacing a small amount of straightforward application code.
+
+Do not introduce `langchain-community`.
 
 ## Legal Document Considerations
 
-Legal documents have structure that generic text documents may not.
+Legal documents contain structure and relationships that generic text pipelines may miss.
 
 Be aware of:
 
@@ -358,58 +511,88 @@ Be aware of:
 * tables of contents
 * signature pages
 * page labels versus physical PDF pages
+* related agreements
+* superseded provisions
 
-Do not assume semantic similarity alone is sufficient to determine which provision governs a question.
+Do not assume semantic similarity alone determines which provision governs a question.
 
-A table of contents, for example, may be highly similar to a query while containing no substantive answer.
+For example, a table of contents may be highly similar to a query while containing no substantive evidence.
+
+Similarly, a semantically relevant provision may have been modified or superseded by an amendment.
+
+Future retrieval improvements should account for these characteristics without weakening provenance.
 
 ## Error Handling
 
-Prefer explicit failures with useful messages.
+Prefer explicit failures with actionable messages.
 
-Examples include:
+Important failure cases include:
 
 * document directory does not exist
-* no supported documents found
+* no supported documents are found
 * PDF cannot be parsed
 * Ollama is unavailable
-* required model is unavailable
+* required generation model is unavailable
+* required embedding model is unavailable
 * Chroma cannot be opened
+* indexing fails
 * no relevant evidence is retrieved
 * structured model response cannot be validated
+* citation IDs are invalid
 
-Do not silently swallow indexing, retrieval, or citation errors.
+Do not silently swallow indexing, retrieval, generation, or citation errors.
+
+Avoid broad exception handling unless errors are re-raised or converted into useful application-level messages.
 
 ## Testing Philosophy
 
-As the project evolves, prioritize tests around system behavior rather than only implementation details.
+Prioritize tests around externally meaningful behavior and architectural invariants rather than only implementation details.
 
-Important areas include:
+Tests should not require a live LLM when the behavior being tested can be isolated.
 
 ### Indexing
+
+Verify that:
 
 * new documents are indexed
 * unchanged documents are skipped
 * modified documents replace old chunks
-* duplicate vectors are not created
-* metadata survives ingestion and chunking
+* repeated indexing does not create duplicate vectors
+* document hashes are stable
+* chunk IDs are deterministic
+* provenance metadata survives ingestion and chunking
 
 ### Retrieval
 
-Given a known question, verify that the expected supporting clause appears within the top retrieved results.
+Given a known document corpus and question, verify that the expected supporting clause appears within the top retrieved results.
+
+Retrieval tests should be separable from answer-generation tests where practical.
 
 ### Grounding
 
-Verify that questions unsupported by the indexed documents produce an insufficient-evidence response.
+Verify that:
+
+* answers are based on supplied evidence
+* unsupported questions produce an insufficient-evidence response
+* evidence supplied to the model is clearly associated with source IDs
 
 ### Citations
 
 Verify that:
 
 * invalid source IDs are rejected
-* citations correspond to retrieved chunks
+* citation IDs map only to the retrieved evidence supplied to the model
 * duplicate document/page citations are collapsed
-* rendered citations come from metadata rather than generated text
+* rendered filenames and page numbers come from metadata rather than generated text
+
+### Configuration
+
+When configuration behavior changes, verify:
+
+* environment variables are loaded correctly
+* defaults behave as expected
+* paths are represented consistently
+* application code does not duplicate configuration constants
 
 ## V2 Areas of Interest
 
@@ -417,11 +600,11 @@ Likely future work includes:
 
 * section-aware legal document parsing
 * article/section/subsection metadata
-* table-of-contents detection
-* hybrid keyword + semantic search
+* table-of-contents detection and filtering
+* hybrid keyword and semantic search
 * retrieval reranking
-* section-level citations
-* multiple document formats
+* section- and clause-level citations
+* additional document formats
 * structured extraction of parties and dates
 * obligation extraction
 * event extraction
@@ -431,40 +614,83 @@ Likely future work includes:
 * RAG quality metrics
 * LangGraph-based agent workflows
 
-Do not implement all of these opportunistically.
+Do not implement these opportunistically.
 
 Prefer incremental changes with measurable improvements over increasing architectural complexity.
 
 ## Guidance for Agentic Features
 
-The current application is primarily a RAG system, not an autonomous agent.
+The current application is primarily a deterministic RAG system, not an autonomous agent.
 
-Do not introduce LangGraph or multi-step agent loops simply to make the architecture more "agentic."
+Do not introduce LangGraph, tool loops, planning loops, or multi-agent architecture simply to make the project more "agentic."
 
-Agent orchestration becomes useful when the system needs to make decisions such as:
+Agent orchestration becomes useful when the system must make meaningful decisions such as:
 
-* whether another retrieval is necessary
-* which document collection to search
-* whether to inspect an amendment
-* whether a referenced agreement must be retrieved
+* whether additional retrieval is necessary
+* which document or collection should be searched
+* whether a referenced agreement should be retrieved
+* whether an amendment needs to be inspected
 * whether structured metadata or semantic search is more appropriate
+* whether evidence from multiple documents must be reconciled
 
-Until those behaviors are required, prefer the simpler deterministic RAG pipeline.
+When introducing agentic behavior:
+
+1. Identify the decision that cannot be handled cleanly by the existing deterministic pipeline.
+2. Define the tools or state required to make that decision.
+3. Preserve provenance across every tool call.
+4. Keep deterministic validation outside the LLM.
+5. Add evaluation or tests for the new behavior.
+
+Until these behaviors are required, prefer the simpler RAG pipeline.
+
+## Working With Documents
+
+Legal documents used for local development live under:
+
+````text
+data/documents/
+````
+
+Actual legal documents should not be committed to Git.
+
+Do not modify, delete, rename, or commit user documents unless explicitly requested.
+
+Do not commit the generated Chroma database.
+
+Treat document contents as potentially confidential even when working with sample documents.
 
 ## When Making Changes
 
-Before modifying the code:
+Before modifying code:
 
-1. Inspect the relevant existing modules.
-2. Understand the current data flow.
-3. Preserve provenance and citation behavior.
-4. Reuse existing configuration.
-5. Avoid unnecessary abstractions.
+1. Read this file.
+2. Inspect the relevant existing modules and tests.
+3. Understand the current data flow before proposing a replacement.
+4. Preserve provenance and citation behavior.
+5. Reuse existing configuration.
 6. Keep indexing and querying separate.
-7. Run or update relevant tests.
-8. Update documentation when behavior or setup changes.
+7. Avoid unnecessary abstractions and dependencies.
+8. Add or update relevant tests.
+9. Run the relevant tests.
+10. Update README, `.env.example`, or other documentation when user-visible behavior or setup changes.
 
 For substantial architectural changes, explain the proposed approach before modifying multiple modules.
+
+Do not perform unrelated refactors as part of a focused task unless they are necessary for the requested change.
+
+## Definition of Done
+
+For a typical code change, consider the work complete when:
+
+* the requested behavior is implemented
+* existing architectural invariants are preserved
+* relevant tests pass
+* new behavior has appropriate test coverage where practical
+* provenance and citation behavior remain correct
+* dependencies and `uv.lock` are updated when necessary
+* configuration documentation is updated when necessary
+* user-facing commands or behavior are reflected in the README when necessary
+* no unrelated files or local legal documents are committed
 
 ## Project Philosophy
 
@@ -476,8 +702,10 @@ Optimize for:
 
 **validated provenance > model-generated citations**
 
-**simple deterministic workflows > unnecessary agent complexity**
+**deterministic application logic > unnecessary LLM decisions**
+
+**simple workflows > unnecessary agent complexity**
 
 **local processing > external services**
 
-The long-term goal is not merely to create a chatbot over PDFs. It is to build a reliable local system for researching relationships, obligations, events, dates, and other facts across collections of legal documents while preserving traceability back to the underlying evidence.
+Reliability and evidence traceability are more important than making the system appear more intelligent or autonomous.

@@ -1,5 +1,5 @@
 from langchain_ollama import OllamaEmbeddings
-from agent.config import settings
+from agent.settings import settings
 
 def get_embeddings() -> OllamaEmbeddings:
     return OllamaEmbeddings(

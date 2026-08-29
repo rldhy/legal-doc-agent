@@ -1,7 +1,7 @@
 from agent.query import run_query
 
 
-def main():
+def start():
     print("Legal Document Agent")
     print("Type 'quit' or 'exit' to stop.\n")
 
@@ -22,6 +22,8 @@ def main():
             query=query
         )
 
+        print()
+
 
 if __name__ == "__main__":
-    main()
+    start()
